@@ -177,6 +177,66 @@ pub fn tool_descriptors() -> Vec<ToolDescriptor> {
             }),
         },
         ToolDescriptor {
+            name: "ket_align".into(),
+            description: "Compare two schemas and find candidate field mappings. Uses structural alignment: name similarity (Levenshtein + substring bonus), type compatibility, and identity alignment. Returns candidates ranked by confidence.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "source_schema_cid": { "type": "string", "description": "CID of the source schema" },
+                    "target_schema_cid": { "type": "string", "description": "CID of the target schema" },
+                    "min_confidence": { "type": "number", "description": "Minimum confidence threshold 0.0-1.0 (default 0.3)" }
+                },
+                "required": ["source_schema_cid", "target_schema_cid"]
+            }),
+        },
+        ToolDescriptor {
+            name: "ket_topology".into(),
+            description: "Analyze emergent structure in the DAG. Clusters nodes by schema + identity, finds convergence points (multi-agent agreement), and reports schema co-occurrence in lineage chains. Read-only — never mutates.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "description": "Optional: filter nodes by kind before analysis" }
+                }
+            }),
+        },
+        ToolDescriptor {
+            name: "ket_schema_store".into(),
+            description: "Store a schema definition in CAS. Define fields with name, kind (string/integer/float/bool/cid), required/optional, and identity flags. Returns the schema CID for use with validate, canonicalize, and align tools.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Schema name (e.g. 'observation', 'claim')" },
+                    "version": { "type": "integer", "description": "Schema version number" },
+                    "fields": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string" },
+                                "kind": { "type": "string", "description": "string, integer, float, bool, cid" },
+                                "required": { "type": "boolean", "description": "Default true" },
+                                "identity": { "type": "boolean", "description": "Identity-bearing field. Default false" }
+                            },
+                            "required": ["name", "kind"]
+                        },
+                        "description": "Ordered field definitions"
+                    }
+                },
+                "required": ["name", "version", "fields"]
+            }),
+        },
+        ToolDescriptor {
+            name: "ket_schema_stats".into(),
+            description: "Check deduplication effectiveness for a schema. Returns total nodes tagged with the schema vs unique output CIDs. High ratio means the schema is working — identical observations hash identically.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "schema_cid": { "type": "string", "description": "Schema CID to check stats for" }
+                },
+                "required": ["schema_cid"]
+            }),
+        },
+        ToolDescriptor {
             name: "ket_search".into(),
             description: "Full-text search across all CAS blobs. Finds content matching a query string.".into(),
             input_schema: serde_json::json!({
@@ -199,6 +259,17 @@ pub fn tool_descriptors() -> Vec<ToolDescriptor> {
             }),
         },
     ]
+}
+
+fn parse_field_kind(s: &str) -> Result<canon_d::FieldKind, McpError> {
+    match s {
+        "string" => Ok(canon_d::FieldKind::String),
+        "integer" => Ok(canon_d::FieldKind::Integer),
+        "float" => Ok(canon_d::FieldKind::Float),
+        "bool" => Ok(canon_d::FieldKind::Bool),
+        "cid" => Ok(canon_d::FieldKind::Cid),
+        _ => Err(McpError::InvalidParams(format!("Unknown field kind: {s}. Use: string, integer, float, bool, cid"))),
+    }
 }
 
 fn parse_node_kind(s: &str) -> Result<ket_dag::NodeKind, McpError> {
@@ -414,6 +485,216 @@ pub fn handle_tool_call(
             Ok(serde_json::json!({
                 "cid": cid.as_str(),
                 "canonical_bytes_hex": hex
+            }))
+        }
+
+        "ket_align" => {
+            let src_cid = params["source_schema_cid"]
+                .as_str()
+                .ok_or_else(|| McpError::InvalidParams("source_schema_cid required".into()))?;
+            let tgt_cid = params["target_schema_cid"]
+                .as_str()
+                .ok_or_else(|| McpError::InvalidParams("target_schema_cid required".into()))?;
+            let min_conf = params
+                .get("min_confidence")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.3);
+
+            let src_data = cas.get(&ket_cas::Cid::from(src_cid))?;
+            let src_schema: canon_d::Schema = serde_json::from_slice(&src_data)
+                .map_err(|e| McpError::InvalidParams(format!("Failed to parse source schema: {e}")))?;
+
+            let tgt_data = cas.get(&ket_cas::Cid::from(tgt_cid))?;
+            let tgt_schema: canon_d::Schema = serde_json::from_slice(&tgt_data)
+                .map_err(|e| McpError::InvalidParams(format!("Failed to parse target schema: {e}")))?;
+
+            let config = canon_d::AlignConfig {
+                min_confidence: min_conf,
+                ..canon_d::AlignConfig::default()
+            };
+            let candidates = canon_d::align(&src_schema, &tgt_schema, &config);
+
+            let results: Vec<Value> = candidates
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "source_field": c.source_field,
+                        "target_field": c.target_field,
+                        "confidence": c.confidence,
+                        "rationale": {
+                            "name_score": c.rationale.name_score,
+                            "type_score": c.rationale.type_score,
+                            "identity_score": c.rationale.identity_score,
+                        }
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({
+                "source_schema": src_schema.name,
+                "target_schema": tgt_schema.name,
+                "candidates": results
+            }))
+        }
+
+        "ket_topology" => {
+            let kind_filter = params.get("kind").and_then(|v| v.as_str());
+            let dag = ket_dag::Dag::new(cas);
+            let all_cids = cas.list()?;
+
+            let mut node_infos = Vec::new();
+            for cid in &all_cids {
+                if let Ok(node) = dag.get_node(cid) {
+                    if let Some(filter) = kind_filter {
+                        if node.kind.to_string() != filter {
+                            continue;
+                        }
+                    }
+
+                    // Compute identity hash if schema is present
+                    let identity_hash = if let Some(ref schema_cid) = node.schema_cid {
+                        if let Ok(schema_data) = cas.get(schema_cid) {
+                            if let Ok(schema) = serde_json::from_slice::<canon_d::Schema>(&schema_data) {
+                                if let Ok(content_data) = cas.get(&node.output_cid) {
+                                    if let Ok(content_val) = serde_json::from_slice::<Value>(&content_data) {
+                                        let canon = canon_d::Canon::new(&schema);
+                                        canon.identity_projection(&content_val)
+                                            .ok()
+                                            .map(|bytes| ket_cas::hash_bytes(&bytes).as_str().to_string())
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Collect ancestor schemas by walking parents (1 level)
+                    let ancestor_schemas: Vec<String> = node
+                        .parents
+                        .iter()
+                        .filter_map(|p| {
+                            dag.get_node(p)
+                                .ok()
+                                .and_then(|n| n.schema_cid.map(|s| s.as_str().to_string()))
+                        })
+                        .collect();
+
+                    node_infos.push(canon_d::NodeInfo {
+                        node_cid: cid.as_str().to_string(),
+                        schema_cid: node.schema_cid.as_ref().map(|s| s.as_str().to_string()),
+                        identity_hash,
+                        agent: node.agent.clone(),
+                        ancestor_schemas,
+                    });
+                }
+            }
+
+            let topo = canon_d::TopologyView::from_nodes(&node_infos);
+
+            let clusters: Vec<Value> = topo
+                .clusters()
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "schema_cid": c.schema_cid,
+                        "identity_hash": c.identity_hash,
+                        "node_count": c.node_cids.len(),
+                        "agent_count": c.agent_count,
+                        "node_cids": c.node_cids,
+                    })
+                })
+                .collect();
+
+            let convergent_count = topo.convergent_clusters().len();
+            let co_occurrences: Vec<Value> = topo
+                .schema_co_occurrences()
+                .iter()
+                .map(|(a, b, count)| {
+                    serde_json::json!({
+                        "schema_a": a,
+                        "schema_b": b,
+                        "count": count,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({
+                "schema_count": topo.schema_count(),
+                "cluster_count": topo.cluster_count(),
+                "convergent_clusters": convergent_count,
+                "clusters": clusters,
+                "co_occurrences": co_occurrences,
+            }))
+        }
+
+        "ket_schema_store" => {
+            let name = params["name"]
+                .as_str()
+                .ok_or_else(|| McpError::InvalidParams("name required".into()))?;
+            let version = params["version"]
+                .as_u64()
+                .ok_or_else(|| McpError::InvalidParams("version required".into()))? as u32;
+            let fields_arr = params["fields"]
+                .as_array()
+                .ok_or_else(|| McpError::InvalidParams("fields array required".into()))?;
+
+            let mut schema = canon_d::Schema::new(name, version);
+            for field in fields_arr {
+                let fname = field["name"]
+                    .as_str()
+                    .ok_or_else(|| McpError::InvalidParams("field name required".into()))?;
+                let fkind_str = field["kind"]
+                    .as_str()
+                    .ok_or_else(|| McpError::InvalidParams("field kind required".into()))?;
+                let fkind = parse_field_kind(fkind_str)?;
+                let is_identity = field.get("identity").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_required = field.get("required").and_then(|v| v.as_bool()).unwrap_or(true);
+
+                if is_identity {
+                    schema = schema.identity(fname, fkind);
+                } else if is_required {
+                    schema = schema.required(fname, fkind);
+                } else {
+                    schema = schema.optional(fname, fkind);
+                }
+            }
+
+            let schema_json = serde_json::to_vec(&schema)
+                .map_err(|e| McpError::InvalidParams(format!("Failed to serialize schema: {e}")))?;
+            let cid = cas.put(&schema_json)?;
+
+            Ok(serde_json::json!({
+                "cid": cid.as_str(),
+                "name": name,
+                "version": version,
+                "field_count": fields_arr.len(),
+            }))
+        }
+
+        "ket_schema_stats" => {
+            let schema_cid = params["schema_cid"]
+                .as_str()
+                .ok_or_else(|| McpError::InvalidParams("schema_cid required".into()))?;
+            let dag = ket_dag::Dag::new(cas);
+            let (total, unique) = dag.schema_stats(&ket_cas::Cid::from(schema_cid))?;
+            let dedup_ratio = if unique > 0 {
+                format!("{:.2}", total as f64 / unique as f64)
+            } else {
+                "N/A".to_string()
+            };
+            Ok(serde_json::json!({
+                "total_nodes": total,
+                "unique_outputs": unique,
+                "dedup_ratio": dedup_ratio,
             }))
         }
 
