@@ -2,6 +2,16 @@
 
 Content-addressed storage, DAG lineage, and structural schema analysis — exposed as MCP tools for any LLM or IDE.
 
+## Why
+
+Most dev work produces artifacts that get copy-pasted, lost between sessions, or buried in chat history. k-stack makes three structural guarantees:
+
+- **Nothing stored twice.** Same content = same CID. Two agents writing the same conclusion get one blob, two provenance records. Storage dedup is free.
+- **Context survives sessions.** Store reasoning once, retrieve by CID forever. No re-explaining architecture to a new chat window.
+- **Lineage is automatic.** Every node records what it derived from and who wrote it. "Why did we do this?" is a graph query, not an archaeology project.
+
+Schema drift, duplicate work across agents, and context loss between handoffs are structural problems. k-stack solves them structurally — not with conventions or discipline, but with content addressing.
+
 ## Install
 
 ### Prerequisites
