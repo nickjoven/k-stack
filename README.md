@@ -1,6 +1,6 @@
 # k-stack
 
-Content-addressed storage, DAG lineage, and schema validation — exposed as MCP tools for any LLM or IDE.
+Content-addressed storage, DAG lineage, and structural schema analysis — exposed as MCP tools for any LLM or IDE.
 
 ## Install
 
@@ -55,7 +55,7 @@ claude plugins add /path/to/k-stack
 
 ### Verify
 
-In Claude Code (CLI or VS Code), type `/mcp`. You should see `k-stack` with 11 tools.
+In Claude Code (CLI or VS Code), type `/mcp`. You should see `k-stack` with 15 tools.
 
 ## Tools
 
@@ -75,13 +75,22 @@ In Claude Code (CLI or VS Code), type `/mcp`. You should see `k-stack` with 11 t
 | `ket_lineage` | `cid`, `max_depth?` | `chain[]` |
 | `ket_children` | `cid` | `children[]` |
 
-### Schema
+### Schema (canon.d)
 
 | Tool | Input | Output |
 |------|-------|--------|
+| `ket_schema_store` | `name`, `version`, `fields[]` | `cid` |
 | `ket_schema_list` | — | `schemas[]` |
 | `ket_schema_validate` | `schema_cid`, `content` | `valid`, `errors?` |
 | `ket_canonicalize` | `schema_cid`, `content` | `cid`, `canonical_bytes_hex` |
+| `ket_schema_stats` | `schema_cid` | `total_nodes`, `unique_outputs`, `dedup_ratio` |
+
+### Structure (canon.d)
+
+| Tool | Input | Output |
+|------|-------|--------|
+| `ket_align` | `source_schema_cid`, `target_schema_cid`, `min_confidence?` | `candidates[]` with confidence + rationale |
+| `ket_topology` | `kind?` | `clusters[]`, `convergent_clusters`, `co_occurrences[]` |
 
 ### Query
 
@@ -105,11 +114,12 @@ In Claude Code (CLI or VS Code), type `/mcp`. You should see `k-stack` with 11 t
             "This traces back through the ticket to the Q2 OKR
              for reducing API latency."
 
-    Human: "Save a snapshot of this conversation context"
+    Human: "Are these two schemas talking about the same thing?"
 
-    Claude: [ket_store(kind="context", content=<summary>,
-             parents=[recent_cids], agent="claude")]
-            -> context persisted, recoverable by CID in any future session
+    Claude: [ket_align(source_schema_cid="02b1...", target_schema_cid="5690...")]
+            -> subject -> subject_id (1.0), claim -> assessment (0.64)
+            "Yes — observation.subject maps to review.subject_id with full
+             confidence. The schemas describe the same entities differently."
 
 ## Configuration
 
@@ -127,7 +137,20 @@ Content in, CID out, parents link the story.
 - **CAS**: BLAKE3 hash of content = CID. Same content = same CID, always. Automatic dedup.
 - **DAG**: Nodes record what was produced, what it derived from, who produced it, and when.
 - **Schema**: canon.d canonicalizes JSON deterministically. Validates structure, enables drift detection.
+- **Alignment**: Structural comparison of schemas — name similarity, type compatibility, identity alignment — produces field mapping candidates without ML or external services.
+- **Topology**: Read-only analysis of what agents have built. Clusters nodes by schema + identity, finds convergence (multi-agent agreement), reports schema co-occurrence.
 - **Secrets**: Refuses to store content matching API key, password, and PEM patterns.
+
+## Addons
+
+k-stack is the core. These tools build on top of it:
+
+| Addon | What it does | Repo |
+|-------|-------------|------|
+| **catbus** | Multi-model context handoffs via immutable handoff packets. Pack context + artifacts into CAS, hand a CID to the next agent. | [catbus](https://github.com/nickjoven/catbus) |
+| **ket-cli** | Full CLI with `put`, `get`, `dag`, `repair`, `scan`, `export/import`, Graphviz DOT output, and more. | [ket](https://github.com/nickjoven/ket) |
+
+catbus is intentionally not in the core stack — it enforces a specific handoff workflow (pack/unpack with required summaries). k-stack stays unopinionated: content in, CID out.
 
 ## License
 
