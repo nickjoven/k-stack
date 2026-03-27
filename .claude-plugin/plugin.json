@@ -1,0 +1,13 @@
+{
+  "name": "k-stack",
+  "description": "Content-addressed storage, DAG lineage, and schema validation via MCP. Store anything, link it to parents, trace how knowledge was derived.",
+  "version": "0.1.0",
+  "mcpServers": {
+    "k-stack": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/target/release/k-stack",
+      "env": {
+        "KET_HOME": "${KET_HOME:-.ket}"
+      }
+    }
+  }
+}
