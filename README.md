@@ -4,13 +4,21 @@ Content-addressed storage, DAG lineage, and structural schema analysis — expos
 
 ## Why
 
-Most dev work produces artifacts that get copy-pasted, lost between sessions, or buried in chat history. k-stack makes three structural guarantees:
+Knowledge lives in three places today: human memory, LLM context windows, and code. All three are lossy in different ways. Humans forget and paraphrase. LLMs hallucinate and lose context between sessions. Code captures the *what* but not the *why*. When you ask any of these "what did we decide?", you get an answer filtered through a lossy proxy — and you have no way to verify it against the original.
 
-- **Nothing stored twice.** Same content = same CID. Two agents writing the same conclusion get one blob, two provenance records. Storage dedup is free.
-- **Context survives sessions.** Store reasoning once, retrieve by CID forever. No re-explaining architecture to a new chat window.
-- **Lineage is automatic.** Every node records what it derived from and who wrote it. "Why did we do this?" is a graph query, not an archaeology project.
+k-stack stores artifacts by their content hash (CID). When you retrieve something by its hash, the content *is* the proof — if it didn't match, you wouldn't get it back. That's not an answer from memory. It's the original, verified by the act of retrieval.
 
-Schema drift, duplicate work across agents, and context loss between handoffs are structural problems. k-stack solves them structurally — not with conventions or discipline, but with content addressing.
+This changes what's possible:
+
+| Today | With k-stack |
+|-------|-------------|
+| Copy-paste context into a new chat window. It's stale immediately. | Store once, retrieve by CID. Identical to the original every time. |
+| "Why did we decide this?" — dig through Slack, PRs, docs for hours. | Every artifact records what it derived from. Walk the chain. |
+| Two agents produce the same analysis. Stored twice, no one notices. | Same content = same hash. Dedup is automatic, not a policy. |
+| "Did this doc change?" — manual diff, or you just don't check. | Re-hash and compare. Instant yes/no, zero diffing. |
+| Schema evolves across teams. Fields get renamed. Nobody notices. | Structural comparison scores field similarity. No ML needed. |
+
+The deeper point: git solved this for code. Every commit is content-addressed, every history is a DAG, every merge is traceable. But git only tracks files. k-stack gives the same structural guarantees to everything else — reasoning, decisions, context, schemas — and makes it accessible to any agent that speaks MCP.
 
 ## Install
 
