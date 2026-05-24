@@ -116,7 +116,8 @@ pub fn tool_descriptors() -> Vec<ToolDescriptor> {
                     "content": { "type": "string", "description": "Content to store" },
                     "kind": { "type": "string", "description": "Node kind: memory, code, reasoning, task, cdom, score, context" },
                     "parents": { "type": "array", "items": { "type": "string" }, "description": "Parent CIDs this derives from" },
-                    "agent": { "type": "string", "description": "Agent name (e.g. 'claude', 'human', 'copilot')" }
+                    "agent": { "type": "string", "description": "Agent name (e.g. 'claude', 'human', 'copilot')" },
+                    "edge_kind": { "type": "string", "enum": ["grounds", "derives", "proposes"], "description": "Epistemic edge kind for parent links. grounds = irreducible input (axiom, measurement); derives = logically follows (default); proposes = suggested but not entailed (hypothesis)" }
                 },
                 "required": ["content", "kind", "parents", "agent"]
             }),
@@ -349,6 +350,14 @@ pub fn handle_tool_call(
                 })
                 .unwrap_or_default();
 
+            let edge_kind = params.get("edge_kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("derives");
+            let edge_kind = match edge_kind {
+                "grounds" | "derives" | "proposes" => edge_kind,
+                _ => "derives",
+            };
+
             let kind = parse_node_kind(kind_str)?;
             let dag = ket_dag::Dag::new(cas);
             let (node_cid, content_cid) =
@@ -356,7 +365,8 @@ pub fn handle_tool_call(
 
             Ok(serde_json::json!({
                 "node_cid": node_cid.as_str(),
-                "content_cid": content_cid.as_str()
+                "content_cid": content_cid.as_str(),
+                "edge_kind": edge_kind
             }))
         }
 
