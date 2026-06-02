@@ -23,7 +23,16 @@ fn main() {
         }
     };
 
-    if let Err(e) = k_stack::run_stdio_server(&cas) {
+    // The Dolt SQL projection is optional. When present (KET_HOME/ket.db with a
+    // .dolt dir), DAG nodes are mirrored into SQL so typed epistemic edges
+    // (edge_kind) are recorded in dag_edges. When absent, storage still works —
+    // the ket-dag CAS node is the source of truth; only the SQL mirror is skipped.
+    let db = ket_sql::DoltDb::open(ket_home.join("ket.db")).ok();
+    if db.is_none() {
+        eprintln!("k-stack: no Dolt db at {}/ket.db — SQL projection disabled (edge_kind not recorded)", ket_home.display());
+    }
+
+    if let Err(e) = k_stack::run_stdio_server(&cas, db.as_ref()) {
         eprintln!("k-stack: {e}");
         std::process::exit(1);
     }

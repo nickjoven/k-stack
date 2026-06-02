@@ -70,7 +70,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 [[package]]
 name = "canon_d"
 version = "0.1.0"
-source = "git+https://github.com/nickjoven/canon.d.git?rev=b75a87d#b75a87d708a85a724ef50325b33a3a081248ca59"
+source = "git+https://github.com/nickjoven/canon.d.git?tag=v0.1.0#0a18a322729a4d8eda0ed9f473a6c0aacb64d626"
 dependencies = [
  "blake3",
  "serde",
@@ -262,6 +262,7 @@ dependencies = [
  "canon_d",
  "ket-cas",
  "ket-dag",
+ "ket-sql",
  "serde",
  "serde_json",
  "tempfile",
@@ -270,8 +271,8 @@ dependencies = [
 
 [[package]]
 name = "ket-cas"
-version = "0.1.0"
-source = "git+https://github.com/nickjoven/ket.git?rev=168c54a#168c54af25ff454c0bc79b628df558af28aea5b9"
+version = "0.2.0"
+source = "git+https://github.com/nickjoven/ket.git?tag=v0.2.0#3530ad57e5ba1e33b863afa1bb1c476c64de113d"
 dependencies = [
  "blake3",
  "serde",
@@ -280,8 +281,8 @@ dependencies = [
 
 [[package]]
 name = "ket-dag"
-version = "0.1.0"
-source = "git+https://github.com/nickjoven/ket.git?rev=168c54a#168c54af25ff454c0bc79b628df558af28aea5b9"
+version = "0.2.0"
+source = "git+https://github.com/nickjoven/ket.git?tag=v0.2.0#3530ad57e5ba1e33b863afa1bb1c476c64de113d"
 dependencies = [
  "base64",
  "chrono",
@@ -289,6 +290,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "ket-sql"
+version = "0.2.0"
+source = "git+https://github.com/nickjoven/ket.git?tag=v0.2.0#3530ad57e5ba1e33b863afa1bb1c476c64de113d"
+dependencies = [
+ "chrono",
+ "ket-cas",
+ "ket-dag",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -499,6 +514,17 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "uuid"
+version = "1.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
+dependencies = [
+ "getrandom",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "wasip2"
