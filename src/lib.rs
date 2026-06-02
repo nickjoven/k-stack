@@ -363,9 +363,16 @@ pub fn handle_tool_call(
             let node = ket_dag::DagNode::new(kind, parents.clone(), content_cid.clone(), agent);
             let node_cid = dag.put_node(&node)?;
 
-            // Sync to SQL if Dolt is available. The ket-dag node itself stores
-            // untyped parents; edge_kind lives only in the SQL dag_edges
-            // projection, so it is recorded here when a db is present.
+            // Write edge_kind into the Dolt projection when present.
+            //
+            // NOTE: Dolt is a projection, not the source of truth (ket DESIGN.md).
+            // Today edge_kind lives ONLY in dag_edges — the ket-dag node stores
+            // untyped parents — so this projection currently holds primary state
+            // with no CAS source, which the design flags as the silent-drift
+            // class. This call is correct *as a projection writer*; making the
+            // typing recoverable from the substrate requires the L2 decision
+            // (in-node typed parents vs. a content-addressed annotation node),
+            // after which this becomes a pure mirror.
             if let Some(db) = db {
                 let parent_refs: Vec<(&str, i32, &str)> = parents
                     .iter()
