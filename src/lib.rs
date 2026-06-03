@@ -109,13 +109,14 @@ pub fn tool_descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "ket_store".into(),
-            description: "Store content and create a DAG node with provenance. Links content to parents, records agent and kind. Returns both the node CID and content CID.".into(),
+            description: "Store content and create a DAG node with provenance. Links content to parents, records agent and kind. Returns both the node CID and content CID. The epistemic edge_kind on parent links is recorded in the SQL projection when a Dolt database is available.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "content": { "type": "string", "description": "Content to store" },
                     "kind": { "type": "string", "description": "Node kind: memory, code, reasoning, task, cdom, score, context" },
                     "parents": { "type": "array", "items": { "type": "string" }, "description": "Parent CIDs this derives from" },
+                    "edge_kind": { "type": "string", "enum": ["grounds", "derives", "proposes"], "description": "Epistemic edge kind for parent links. grounds = irreducible input (axiom, measurement); derives = logically follows (default); proposes = suggested but not entailed (hypothesis)" },
                     "agent": { "type": "string", "description": "Agent name (e.g. 'claude', 'human', 'copilot')" }
                 },
                 "required": ["content", "kind", "parents", "agent"]
@@ -289,6 +290,7 @@ pub fn handle_tool_call(
     tool_name: &str,
     params: &Value,
     cas: &ket_cas::Store,
+    db: Option<&ket_sql::DoltDb>,
 ) -> Result<Value, McpError> {
     match tool_name {
         "ket_put" => {
@@ -348,11 +350,48 @@ pub fn handle_tool_call(
                         .collect()
                 })
                 .unwrap_or_default();
+            let edge_kind = ket_dag::EdgeKind::parse_or_default(
+                params
+                    .get("edge_kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("derives"),
+            );
 
             let kind = parse_node_kind(kind_str)?;
+            // The edge kind is part of the content-addressed node (ket >= 0.3:
+            // typed parents), so it is the source of truth and self-audits with
+            // the node. Apply the single requested kind to every parent link.
+            // An all-`derives` node canonicalizes to the untyped form and keeps
+            // its prior CID, so default stores are unchanged.
+            let parent_links: Vec<(ket_cas::Cid, ket_dag::EdgeKind)> =
+                parents.iter().cloned().map(|p| (p, edge_kind)).collect();
             let dag = ket_dag::Dag::new(cas);
-            let (node_cid, content_cid) =
-                dag.store_with_node(content.as_bytes(), kind, parents, agent)?;
+            let content_cid = cas.put(content.as_bytes())?;
+            let node =
+                ket_dag::DagNode::new_typed(kind, parent_links, content_cid.clone(), agent);
+            let node_cid = dag.put_node(&node)?;
+
+            // Mirror the node into the Dolt projection by DERIVING the edges from
+            // the node itself — Dolt is a projection, the node is the source
+            // (ket DESIGN.md). dag_edges is now rebuildable from the CAS, so this
+            // is a pure mirror, not a primary write.
+            if let Some(db) = db {
+                let parent_refs: Vec<(&str, i32, &str)> = node
+                    .parent_links()
+                    .enumerate()
+                    .map(|(i, (cid, k))| (cid.as_str(), i as i32, k.as_str()))
+                    .collect();
+                let _ = db.sync_dag_node(
+                    node_cid.as_str(),
+                    kind_str,
+                    agent,
+                    &node.timestamp,
+                    content_cid.as_str(),
+                    "",
+                    &parent_refs,
+                    node.schema_cid.as_ref().map(|c| c.as_str()),
+                );
+            }
 
             Ok(serde_json::json!({
                 "node_cid": node_cid.as_str(),
@@ -782,6 +821,7 @@ pub fn handle_tool_call(
 pub fn handle_jsonrpc(
     request: &JsonRpcRequest,
     cas: &ket_cas::Store,
+    db: Option<&ket_sql::DoltDb>,
 ) -> JsonRpcResponse {
     match request.method.as_str() {
         "initialize" => JsonRpcResponse {
@@ -816,7 +856,7 @@ pub fn handle_jsonrpc(
                 .cloned()
                 .unwrap_or(Value::Object(Default::default()));
 
-            match handle_tool_call(tool_name, &arguments, cas) {
+            match handle_tool_call(tool_name, &arguments, cas, db) {
                 Ok(result) => JsonRpcResponse {
                     jsonrpc: "2.0".into(),
                     id: request.id.clone(),
@@ -856,7 +896,10 @@ pub fn handle_jsonrpc(
     }
 }
 
-pub fn run_stdio_server(cas: &ket_cas::Store) -> Result<(), McpError> {
+pub fn run_stdio_server(
+    cas: &ket_cas::Store,
+    db: Option<&ket_sql::DoltDb>,
+) -> Result<(), McpError> {
     use std::io::{BufRead, BufReader, Write};
 
     let stdin = std::io::stdin();
@@ -871,7 +914,7 @@ pub fn run_stdio_server(cas: &ket_cas::Store) -> Result<(), McpError> {
         }
 
         let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
-            Ok(request) => handle_jsonrpc(&request, cas),
+            Ok(request) => handle_jsonrpc(&request, cas, db),
             Err(e) => JsonRpcResponse {
                 jsonrpc: "2.0".into(),
                 id: None,
