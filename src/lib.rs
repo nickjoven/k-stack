@@ -350,34 +350,36 @@ pub fn handle_tool_call(
                         .collect()
                 })
                 .unwrap_or_default();
-            let edge_kind = params
-                .get("edge_kind")
-                .and_then(|v| v.as_str())
-                .unwrap_or("derives");
+            let edge_kind = ket_dag::EdgeKind::parse_or_default(
+                params
+                    .get("edge_kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("derives"),
+            );
 
             let kind = parse_node_kind(kind_str)?;
-            // Build the node by hand (rather than dag.store_with_node) so we
-            // have the node + its timestamp to mirror into the SQL projection.
+            // The edge kind is part of the content-addressed node (ket >= 0.3:
+            // typed parents), so it is the source of truth and self-audits with
+            // the node. Apply the single requested kind to every parent link.
+            // An all-`derives` node canonicalizes to the untyped form and keeps
+            // its prior CID, so default stores are unchanged.
+            let parent_links: Vec<(ket_cas::Cid, ket_dag::EdgeKind)> =
+                parents.iter().cloned().map(|p| (p, edge_kind)).collect();
             let dag = ket_dag::Dag::new(cas);
             let content_cid = cas.put(content.as_bytes())?;
-            let node = ket_dag::DagNode::new(kind, parents.clone(), content_cid.clone(), agent);
+            let node =
+                ket_dag::DagNode::new_typed(kind, parent_links, content_cid.clone(), agent);
             let node_cid = dag.put_node(&node)?;
 
-            // Write edge_kind into the Dolt projection when present.
-            //
-            // NOTE: Dolt is a projection, not the source of truth (ket DESIGN.md).
-            // Today edge_kind lives ONLY in dag_edges — the ket-dag node stores
-            // untyped parents — so this projection currently holds primary state
-            // with no CAS source, which the design flags as the silent-drift
-            // class. This call is correct *as a projection writer*; making the
-            // typing recoverable from the substrate requires the L2 decision
-            // (in-node typed parents vs. a content-addressed annotation node),
-            // after which this becomes a pure mirror.
+            // Mirror the node into the Dolt projection by DERIVING the edges from
+            // the node itself — Dolt is a projection, the node is the source
+            // (ket DESIGN.md). dag_edges is now rebuildable from the CAS, so this
+            // is a pure mirror, not a primary write.
             if let Some(db) = db {
-                let parent_refs: Vec<(&str, i32, &str)> = parents
-                    .iter()
+                let parent_refs: Vec<(&str, i32, &str)> = node
+                    .parent_links()
                     .enumerate()
-                    .map(|(i, p)| (p.as_str(), i as i32, edge_kind))
+                    .map(|(i, (cid, k))| (cid.as_str(), i as i32, k.as_str()))
                     .collect();
                 let _ = db.sync_dag_node(
                     node_cid.as_str(),
