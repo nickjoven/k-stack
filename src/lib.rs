@@ -822,8 +822,14 @@ pub fn handle_jsonrpc(
     request: &JsonRpcRequest,
     cas: &ket_cas::Store,
     db: Option<&ket_sql::DoltDb>,
-) -> JsonRpcResponse {
-    match request.method.as_str() {
+) -> Option<JsonRpcResponse> {
+    // A message without an id is a JSON-RPC notification
+    // (notifications/initialized, notifications/cancelled, ...) and MUST
+    // NOT be answered, even when the method is unknown; strict MCP
+    // clients reject servers that reply to notifications.
+    request.id.as_ref()?;
+
+    Some(match request.method.as_str() {
         "initialize" => JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id: request.id.clone(),
@@ -877,13 +883,6 @@ pub fn handle_jsonrpc(
             }
         }
 
-        "notifications/initialized" => JsonRpcResponse {
-            jsonrpc: "2.0".into(),
-            id: request.id.clone(),
-            result: Some(Value::Null),
-            error: None,
-        },
-
         _ => JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id: request.id.clone(),
@@ -893,7 +892,7 @@ pub fn handle_jsonrpc(
                 message: format!("Method not found: {}", request.method),
             }),
         },
-    }
+    })
 }
 
 pub fn run_stdio_server(
@@ -915,7 +914,7 @@ pub fn run_stdio_server(
 
         let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
             Ok(request) => handle_jsonrpc(&request, cas, db),
-            Err(e) => JsonRpcResponse {
+            Err(e) => Some(JsonRpcResponse {
                 jsonrpc: "2.0".into(),
                 id: None,
                 result: None,
@@ -923,12 +922,14 @@ pub fn run_stdio_server(
                     code: -32700,
                     message: format!("Parse error: {e}"),
                 }),
-            },
+            }),
         };
 
-        let response_json = serde_json::to_string(&response)?;
-        writeln!(stdout, "{response_json}").map_err(McpError::Io)?;
-        stdout.flush().map_err(McpError::Io)?;
+        if let Some(response) = response {
+            let response_json = serde_json::to_string(&response)?;
+            writeln!(stdout, "{response_json}").map_err(McpError::Io)?;
+            stdout.flush().map_err(McpError::Io)?;
+        }
     }
 
     Ok(())
