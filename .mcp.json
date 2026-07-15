@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "k-stack": {
-      "command": "/home/njoven/AI/open/k-stack/target/release/k-stack",
+      "command": "/home/nick/code/k-stack/target/release/k-stack",
       "env": {
         "KET_HOME": ".ket"
       }

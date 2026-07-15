@@ -68,6 +68,26 @@ fn tools_list_count() {
 }
 
 #[test]
+fn notifications_get_no_response() {
+    // JSON-RPC messages without an id are notifications and must be
+    // silently absorbed — even unknown ones. Strict MCP clients reject
+    // a server that answers notifications/initialized.
+    let tmp = TempDir::new().unwrap();
+    let responses = run_mcp(
+        tmp.path().to_str().unwrap(),
+        &[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        ],
+    );
+    assert_eq!(responses.len(), 2, "only the two id-bearing requests get replies");
+    assert_eq!(responses[0]["id"], 1);
+    assert_eq!(responses[1]["id"], 2);
+}
+
+#[test]
 fn put_get_verify_roundtrip() {
     let tmp = TempDir::new().unwrap();
     let home = tmp.path().to_str().unwrap();
